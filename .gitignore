@@ -1,0 +1,25 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+
+# Virtual environments (NEVER COMMIT)
+.venv/
+venv/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Local runtime artifacts (NEVER COMMIT)
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+data/*.parquet
+data/*.csv
+
+# Logs
+*.log
+
+# Streamlit cache
+.streamlit/
