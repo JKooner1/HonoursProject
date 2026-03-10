@@ -1,19 +1,17 @@
-﻿from io import BytesIO
-
-import pandas as pd
-from fastapi import FastAPI, File, HTTPException, UploadFile
+﻿from fastapi import FastAPI, File, HTTPException, UploadFile
 
 from app.etl import (
     append_sales_data,
     calculate_kpis,
-    clean_sales_dataframe,
-    daily_sales,
+    daily_units_breakdown,
     load_sales_data,
+    parse_daily_product_sales_report,
     top_products,
+    weekly_summary,
 )
 from app.settings import settings
 
-app = FastAPI(title="Retail Analytics API", version="0.3.0")
+app = FastAPI(title="Retail Analytics API", version="0.4.0")
 
 
 @app.get("/health")
@@ -32,12 +30,11 @@ async def upload_csv(file: UploadFile = File(...)):
 
     try:
         content = await file.read()
-        raw_df = pd.read_csv(BytesIO(content))
-        cleaned_df = clean_sales_dataframe(raw_df)
+        cleaned_df = parse_daily_product_sales_report(content)
         combined_df = append_sales_data(cleaned_df, settings.parquet_path)
 
         return {
-            "message": "CSV uploaded and processed successfully.",
+            "message": "Report uploaded and processed successfully.",
             "uploaded_rows": int(len(cleaned_df)),
             "total_rows_stored": int(len(combined_df)),
             "kpis": calculate_kpis(combined_df),
@@ -54,13 +51,19 @@ def get_kpis():
     return calculate_kpis(df)
 
 
-@app.get("/daily")
-def get_daily_sales():
-    df = load_sales_data(settings.parquet_path)
-    return daily_sales(df)
-
-
 @app.get("/top-products")
 def get_top_products(limit: int = 10):
     df = load_sales_data(settings.parquet_path)
     return top_products(df, limit=limit)
+
+
+@app.get("/weekly-summary")
+def get_weekly_summary():
+    df = load_sales_data(settings.parquet_path)
+    return weekly_summary(df)
+
+
+@app.get("/daily-units")
+def get_daily_units():
+    df = load_sales_data(settings.parquet_path)
+    return daily_units_breakdown(df)

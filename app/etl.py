@@ -1,116 +1,186 @@
 from __future__ import annotations
 
+import csv
+import re
+from datetime import datetime
+from io import StringIO
 from pathlib import Path
-from typing import Dict, List
+from typing import Any
 
 import pandas as pd
 
 
-REQUIRED_CANONICAL_COLUMNS = ["date", "product", "quantity", "total"]
+EXPECTED_REPORT_TITLE = "Daily Product Sales Report"
+
+# Fixed column positions from your report export
+COL_PRODUCT = 8
+COL_WED = 19
+COL_THU = 23
+COL_FRI = 26
+COL_SAT = 28
+COL_SUN = 31
+COL_MON = 33
+COL_TUE = 37
+COL_TOTAL_UNITS = 42
+COL_VALUE = 46
+COL_COST = 50
+COL_PROFIT = 53
+COL_IN_STOCK = 56
+COL_ON_ORDER = 59
+COL_MARGIN_PERCENT = 61
 
 
-COLUMN_ALIASES: Dict[str, List[str]] = {
-    "date": [
-        "date",
-        "sale_date",
-        "transaction_date",
-        "day",
-    ],
-    "product": [
-        "product",
-        "product_name",
-        "item",
-        "description",
-        "name",
-    ],
-    "quantity": [
-        "quantity",
-        "qty",
-        "units",
-        "items_sold",
-    ],
-    "total": [
-        "total",
-        "sales",
-        "sales_value",
-        "revenue",
-        "amount",
-        "line_total",
-    ],
-}
+def _safe_get(row: list[str], index: int) -> str:
+    return row[index].strip() if index < len(row) else ""
 
 
-def _normalise_column_name(name: str) -> str:
-    return (
-        str(name)
-        .strip()
-        .lower()
-        .replace(" ", "_")
-        .replace("-", "_")
-        .replace("/", "_")
+def _to_int(value: str) -> int:
+    value = str(value).strip().replace(",", "")
+    if value == "":
+        return 0
+    return int(float(value))
+
+
+def _to_float(value: str) -> float:
+    value = str(value).strip().replace(",", "")
+    if value == "":
+        return 0.0
+    return float(value)
+
+
+def _extract_report_dates(lines: list[str]) -> tuple[str, str]:
+    joined = "\n".join(lines[:12])
+
+    match = re.search(
+        r"(\d{2}-[A-Za-z]{3}-\d{4})\s+to\s+(\d{2}-[A-Za-z]{3}-\d{4})",
+        joined,
+        flags=re.IGNORECASE,
     )
+    if not match:
+        raise ValueError("Could not detect report date range in uploaded file.")
+
+    start_date = datetime.strptime(match.group(1), "%d-%b-%Y").date().isoformat()
+    end_date = datetime.strptime(match.group(2), "%d-%b-%Y").date().isoformat()
+    return start_date, end_date
 
 
-def _build_column_mapping(columns: List[str]) -> Dict[str, str]:
-    normalised = {_normalise_column_name(col): col for col in columns}
-    mapping: Dict[str, str] = {}
+def parse_daily_product_sales_report(content: bytes) -> pd.DataFrame:
+    text = content.decode("utf-8-sig", errors="replace")
+    lines = text.splitlines()
 
-    for canonical, aliases in COLUMN_ALIASES.items():
-        for alias in aliases:
-            if alias in normalised:
-                mapping[normalised[alias]] = canonical
-                break
-
-    return mapping
-
-
-def _validate_columns(df: pd.DataFrame) -> None:
-    missing = [col for col in REQUIRED_CANONICAL_COLUMNS if col not in df.columns]
-    if missing:
+    if EXPECTED_REPORT_TITLE.lower() not in text.lower():
         raise ValueError(
-            f"Missing required columns after mapping: {missing}. "
-            "Expected columns matching date, product, quantity, total."
+            "Uploaded file is not a recognised Daily Product Sales Report export."
         )
 
+    week_start, week_end = _extract_report_dates(lines)
 
-def clean_sales_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    if df.empty:
-        raise ValueError("Uploaded CSV is empty.")
+    reader = csv.reader(StringIO(text))
+    rows = list(reader)
 
-    df = df.copy()
-    df.columns = [_normalise_column_name(col) for col in df.columns]
+    records: list[dict[str, Any]] = []
+    current_department = ""
+    current_sub_department = ""
 
-    mapping = _build_column_mapping(list(df.columns))
-    df = df.rename(columns=mapping)
+    for row in rows:
+        if not row:
+            continue
 
-    _validate_columns(df)
+        product = _safe_get(row, COL_PRODUCT)
 
-    df = df[REQUIRED_CANONICAL_COLUMNS].copy()
+        dept_value = _safe_get(row, 5)
+        dept_name = _safe_get(row, 12)
 
-    df["date"] = pd.to_datetime(df["date"], dayfirst=True, errors="coerce")
-    df["product"] = df["product"].astype(str).str.strip()
-    df["quantity"] = pd.to_numeric(df["quantity"], errors="coerce")
-    df["total"] = pd.to_numeric(df["total"], errors="coerce")
+        if dept_value == "Dept:" and dept_name:
+            current_department = dept_name
+            continue
 
-    df = df.dropna(subset=["date", "product", "quantity", "total"])
-    df = df[df["product"] != ""]
-    df = df[df["quantity"] >= 0]
-    df = df[df["total"] >= 0]
+        if dept_value == "Sub Dept:" and dept_name:
+            current_sub_department = dept_name
+            continue
 
-    df["date"] = df["date"].dt.normalize()
-    df["quantity"] = df["quantity"].astype(int)
+        # Ignore blank/non-product rows
+        if product == "":
+            continue
 
-    df = df.sort_values(["date", "product"]).reset_index(drop=True)
+        # Ignore obvious report header lines
+        if product.lower() in {
+            "product description",
+            "daily product sales report",
+        }:
+            continue
 
-    if df.empty:
-        raise ValueError("No valid rows remained after cleaning.")
+        # Ignore row if it has no numeric sales content
+        total_units_raw = _safe_get(row, COL_TOTAL_UNITS)
+        value_raw = _safe_get(row, COL_VALUE)
+
+        if total_units_raw == "" and value_raw == "":
+            continue
+
+        records.append(
+            {
+                "week_start": week_start,
+                "week_end": week_end,
+                "department": current_department,
+                "sub_department": current_sub_department,
+                "product": product,
+                "wed_units": _to_int(_safe_get(row, COL_WED)),
+                "thu_units": _to_int(_safe_get(row, COL_THU)),
+                "fri_units": _to_int(_safe_get(row, COL_FRI)),
+                "sat_units": _to_int(_safe_get(row, COL_SAT)),
+                "sun_units": _to_int(_safe_get(row, COL_SUN)),
+                "mon_units": _to_int(_safe_get(row, COL_MON)),
+                "tue_units": _to_int(_safe_get(row, COL_TUE)),
+                "total_units": _to_int(total_units_raw),
+                "sales_value": round(_to_float(value_raw), 2),
+                "cost_value": round(_to_float(_safe_get(row, COL_COST)), 3),
+                "profit_value": round(_to_float(_safe_get(row, COL_PROFIT)), 2),
+                "in_stock": _to_int(_safe_get(row, COL_IN_STOCK)),
+                "on_order": _to_int(_safe_get(row, COL_ON_ORDER)),
+                "margin_percent": round(_to_float(_safe_get(row, COL_MARGIN_PERCENT)), 2),
+            }
+        )
+
+    if not records:
+        raise ValueError("No product rows were found in the uploaded report.")
+
+    df = pd.DataFrame(records)
+
+    # de-dup within same uploaded week/product
+    df = (
+        df.drop_duplicates(subset=["week_start", "week_end", "product"])
+        .sort_values(["week_start", "department", "sub_department", "product"])
+        .reset_index(drop=True)
+    )
 
     return df
 
 
 def load_sales_data(parquet_path: Path) -> pd.DataFrame:
     if not parquet_path.exists():
-        return pd.DataFrame(columns=REQUIRED_CANONICAL_COLUMNS)
+        return pd.DataFrame(
+            columns=[
+                "week_start",
+                "week_end",
+                "department",
+                "sub_department",
+                "product",
+                "wed_units",
+                "thu_units",
+                "fri_units",
+                "sat_units",
+                "sun_units",
+                "mon_units",
+                "tue_units",
+                "total_units",
+                "sales_value",
+                "cost_value",
+                "profit_value",
+                "in_stock",
+                "on_order",
+                "margin_percent",
+            ]
+        )
 
     return pd.read_parquet(parquet_path)
 
@@ -128,7 +198,12 @@ def append_sales_data(new_df: pd.DataFrame, parquet_path: Path) -> pd.DataFrame:
     else:
         combined = pd.concat([existing_df, new_df], ignore_index=True)
 
-    combined = combined.drop_duplicates().sort_values(["date", "product"]).reset_index(drop=True)
+    combined = (
+        combined.drop_duplicates(subset=["week_start", "week_end", "product"])
+        .sort_values(["week_start", "department", "sub_department", "product"])
+        .reset_index(drop=True)
+    )
+
     save_sales_data(combined, parquet_path)
     return combined
 
@@ -136,50 +211,96 @@ def append_sales_data(new_df: pd.DataFrame, parquet_path: Path) -> pd.DataFrame:
 def calculate_kpis(df: pd.DataFrame) -> dict:
     if df.empty:
         return {
-            "total_revenue": 0.0,
+            "total_sales_value": 0.0,
             "total_units": 0,
-            "total_rows": 0,
-            "unique_products": 0,
+            "total_products": 0,
+            "total_profit_value": 0.0,
             "date_from": None,
             "date_to": None,
         }
 
     return {
-        "total_revenue": round(float(df["total"].sum()), 2),
-        "total_units": int(df["quantity"].sum()),
-        "total_rows": int(len(df)),
-        "unique_products": int(df["product"].nunique()),
-        "date_from": df["date"].min().date().isoformat(),
-        "date_to": df["date"].max().date().isoformat(),
+        "total_sales_value": round(float(df["sales_value"].sum()), 2),
+        "total_units": int(df["total_units"].sum()),
+        "total_products": int(df["product"].nunique()),
+        "total_profit_value": round(float(df["profit_value"].sum()), 2),
+        "date_from": str(df["week_start"].min()),
+        "date_to": str(df["week_end"].max()),
     }
-
-
-def daily_sales(df: pd.DataFrame) -> list[dict]:
-    if df.empty:
-        return []
-
-    daily = (
-        df.groupby("date", as_index=False)
-        .agg(revenue=("total", "sum"), units=("quantity", "sum"))
-        .sort_values("date")
-    )
-
-    daily["date"] = daily["date"].dt.date.astype(str)
-    daily["revenue"] = daily["revenue"].round(2)
-
-    return daily.to_dict(orient="records")
 
 
 def top_products(df: pd.DataFrame, limit: int = 10) -> list[dict]:
     if df.empty:
         return []
 
-    products = (
+    result = (
         df.groupby("product", as_index=False)
-        .agg(revenue=("total", "sum"), units=("quantity", "sum"))
-        .sort_values(["revenue", "units"], ascending=[False, False])
+        .agg(
+            total_units=("total_units", "sum"),
+            sales_value=("sales_value", "sum"),
+            profit_value=("profit_value", "sum"),
+        )
+        .sort_values(["sales_value", "total_units"], ascending=[False, False])
         .head(limit)
+        .reset_index(drop=True)
     )
 
-    products["revenue"] = products["revenue"].round(2)
-    return products.to_dict(orient="records")
+    result["sales_value"] = result["sales_value"].round(2)
+    result["profit_value"] = result["profit_value"].round(2)
+
+    return result.to_dict(orient="records")
+
+
+def weekly_summary(df: pd.DataFrame) -> list[dict]:
+    if df.empty:
+        return []
+
+    result = (
+        df.groupby(["week_start", "week_end"], as_index=False)
+        .agg(
+            total_units=("total_units", "sum"),
+            sales_value=("sales_value", "sum"),
+            profit_value=("profit_value", "sum"),
+            total_products=("product", "nunique"),
+        )
+        .sort_values(["week_start", "week_end"])
+        .reset_index(drop=True)
+    )
+
+    result["sales_value"] = result["sales_value"].round(2)
+    result["profit_value"] = result["profit_value"].round(2)
+
+    return result.to_dict(orient="records")
+
+
+def daily_units_breakdown(df: pd.DataFrame) -> list[dict]:
+    if df.empty:
+        return []
+
+    rows: list[dict] = []
+
+    for _, record in df.iterrows():
+        rows.append(
+            {
+                "week_start": record["week_start"],
+                "week_end": record["week_end"],
+                "wed_units": int(record["wed_units"]),
+                "thu_units": int(record["thu_units"]),
+                "fri_units": int(record["fri_units"]),
+                "sat_units": int(record["sat_units"]),
+                "sun_units": int(record["sun_units"]),
+                "mon_units": int(record["mon_units"]),
+                "tue_units": int(record["tue_units"]),
+            }
+        )
+
+    breakdown_df = pd.DataFrame(rows)
+
+    result = (
+        breakdown_df.groupby(["week_start", "week_end"], as_index=False)
+        .sum()
+        .sort_values(["week_start", "week_end"])
+        .reset_index(drop=True)
+    )
+
+    return result.to_dict(orient="records")
