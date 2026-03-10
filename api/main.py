@@ -9,9 +9,10 @@ from app.etl import (
     top_products,
     weekly_summary,
 )
+from app.forecast import forecast_weekly_sales
 from app.settings import settings
 
-app = FastAPI(title="Retail Analytics API", version="0.4.0")
+app = FastAPI(title="Retail Analytics API", version="0.5.0")
 
 
 @app.get("/health")
@@ -67,3 +68,9 @@ def get_weekly_summary():
 def get_daily_units():
     df = load_sales_data(settings.parquet_path)
     return daily_units_breakdown(df)
+
+
+@app.get("/forecast")
+def get_forecast(periods: int = 4):
+    df = load_sales_data(settings.parquet_path)
+    return forecast_weekly_sales(df, periods=periods)
