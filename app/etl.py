@@ -12,7 +12,6 @@ import pandas as pd
 
 EXPECTED_REPORT_TITLE = "Daily Product Sales Report"
 
-# Fixed column positions from your report export
 COL_PRODUCT = 8
 COL_WED = 19
 COL_THU = 23
@@ -99,18 +98,15 @@ def parse_daily_product_sales_report(content: bytes) -> pd.DataFrame:
             current_sub_department = dept_name
             continue
 
-        # Ignore blank/non-product rows
         if product == "":
             continue
 
-        # Ignore obvious report header lines
         if product.lower() in {
             "product description",
             "daily product sales report",
         }:
             continue
 
-        # Ignore row if it has no numeric sales content
         total_units_raw = _safe_get(row, COL_TOTAL_UNITS)
         value_raw = _safe_get(row, COL_VALUE)
 
@@ -146,7 +142,6 @@ def parse_daily_product_sales_report(content: bytes) -> pd.DataFrame:
 
     df = pd.DataFrame(records)
 
-    # de-dup within same uploaded week/product
     df = (
         df.drop_duplicates(subset=["week_start", "week_end", "product"])
         .sort_values(["week_start", "department", "sub_department", "product"])
@@ -156,31 +151,35 @@ def parse_daily_product_sales_report(content: bytes) -> pd.DataFrame:
     return df
 
 
+def empty_sales_dataframe() -> pd.DataFrame:
+    return pd.DataFrame(
+        columns=[
+            "week_start",
+            "week_end",
+            "department",
+            "sub_department",
+            "product",
+            "wed_units",
+            "thu_units",
+            "fri_units",
+            "sat_units",
+            "sun_units",
+            "mon_units",
+            "tue_units",
+            "total_units",
+            "sales_value",
+            "cost_value",
+            "profit_value",
+            "in_stock",
+            "on_order",
+            "margin_percent",
+        ]
+    )
+
+
 def load_sales_data(parquet_path: Path) -> pd.DataFrame:
     if not parquet_path.exists():
-        return pd.DataFrame(
-            columns=[
-                "week_start",
-                "week_end",
-                "department",
-                "sub_department",
-                "product",
-                "wed_units",
-                "thu_units",
-                "fri_units",
-                "sat_units",
-                "sun_units",
-                "mon_units",
-                "tue_units",
-                "total_units",
-                "sales_value",
-                "cost_value",
-                "profit_value",
-                "in_stock",
-                "on_order",
-                "margin_percent",
-            ]
-        )
+        return empty_sales_dataframe()
 
     return pd.read_parquet(parquet_path)
 
@@ -206,6 +205,11 @@ def append_sales_data(new_df: pd.DataFrame, parquet_path: Path) -> pd.DataFrame:
 
     save_sales_data(combined, parquet_path)
     return combined
+
+
+def reset_sales_data(parquet_path: Path) -> None:
+    if parquet_path.exists():
+        parquet_path.unlink()
 
 
 def calculate_kpis(df: pd.DataFrame) -> dict:
@@ -262,6 +266,7 @@ def weekly_summary(df: pd.DataFrame) -> list[dict]:
             sales_value=("sales_value", "sum"),
             profit_value=("profit_value", "sum"),
             total_products=("product", "nunique"),
+            row_count=("product", "count"),
         )
         .sort_values(["week_start", "week_end"])
         .reset_index(drop=True)
@@ -304,3 +309,51 @@ def daily_units_breakdown(df: pd.DataFrame) -> list[dict]:
     )
 
     return result.to_dict(orient="records")
+
+
+def list_uploaded_weeks(df: pd.DataFrame) -> list[dict]:
+    if df.empty:
+        return []
+
+    weeks = (
+        df.groupby(["week_start", "week_end"], as_index=False)
+        .agg(
+            row_count=("product", "count"),
+            total_units=("total_units", "sum"),
+            sales_value=("sales_value", "sum"),
+            profit_value=("profit_value", "sum"),
+            distinct_products=("product", "nunique"),
+        )
+        .sort_values(["week_start", "week_end"])
+        .reset_index(drop=True)
+    )
+
+    weeks["sales_value"] = weeks["sales_value"].round(2)
+    weeks["profit_value"] = weeks["profit_value"].round(2)
+
+    return weeks.to_dict(orient="records")
+
+
+def dataset_summary(df: pd.DataFrame) -> dict:
+    if df.empty:
+        return {
+            "weeks_loaded": 0,
+            "rows_loaded": 0,
+            "distinct_products": 0,
+            "date_from": None,
+            "date_to": None,
+        }
+
+    week_count = (
+        df[["week_start", "week_end"]]
+        .drop_duplicates()
+        .shape[0]
+    )
+
+    return {
+        "weeks_loaded": int(week_count),
+        "rows_loaded": int(len(df)),
+        "distinct_products": int(df["product"].nunique()),
+        "date_from": str(df["week_start"].min()),
+        "date_to": str(df["week_end"].max()),
+    }

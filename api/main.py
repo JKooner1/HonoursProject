@@ -4,15 +4,18 @@ from app.etl import (
     append_sales_data,
     calculate_kpis,
     daily_units_breakdown,
+    dataset_summary,
+    list_uploaded_weeks,
     load_sales_data,
     parse_daily_product_sales_report,
+    reset_sales_data,
     top_products,
     weekly_summary,
 )
 from app.forecast import forecast_weekly_sales
 from app.settings import settings
 
-app = FastAPI(title="Retail Analytics API", version="0.5.0")
+app = FastAPI(title="Retail Analytics API", version="0.6.0")
 
 
 @app.get("/health")
@@ -74,3 +77,21 @@ def get_daily_units():
 def get_forecast(periods: int = 4):
     df = load_sales_data(settings.parquet_path)
     return forecast_weekly_sales(df, periods=periods)
+
+
+@app.get("/weeks")
+def get_uploaded_weeks():
+    df = load_sales_data(settings.parquet_path)
+    return list_uploaded_weeks(df)
+
+
+@app.get("/dataset-summary")
+def get_dataset_summary():
+    df = load_sales_data(settings.parquet_path)
+    return dataset_summary(df)
+
+
+@app.post("/reset-data")
+def post_reset_data():
+    reset_sales_data(settings.parquet_path)
+    return {"message": "Stored dataset has been reset successfully."}

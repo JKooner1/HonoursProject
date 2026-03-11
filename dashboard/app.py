@@ -23,6 +23,12 @@ def post_csv(api_base: str, uploaded_file):
     return response.json()
 
 
+def post_reset(api_base: str):
+    response = requests.post(f"{api_base}/reset-data", timeout=20)
+    response.raise_for_status()
+    return response.json()
+
+
 with st.sidebar:
     st.header("Settings")
     api_base = st.text_input("API Base URL", API_BASE_DEFAULT)
@@ -45,9 +51,19 @@ with st.sidebar:
                 st.error(f"Upload failed: {exc}")
 
     st.markdown("---")
+    st.subheader("Admin")
     if st.button("Refresh Dashboard", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
+
+    if st.button("Reset Stored Data", use_container_width=True):
+        try:
+            result = post_reset(api_base)
+            st.warning(result["message"])
+            st.cache_data.clear()
+            st.rerun()
+        except Exception as exc:
+            st.error(f"Reset failed: {exc}")
 
 
 try:
@@ -55,11 +71,32 @@ try:
     top_products = fetch_json(f"{api_base}/top-products")
     weekly_summary = fetch_json(f"{api_base}/weekly-summary")
     daily_units = fetch_json(f"{api_base}/daily-units")
+    forecast_data = fetch_json(f"{api_base}/forecast?periods=4")
+    weeks_data = fetch_json(f"{api_base}/weeks")
+    dataset_info = fetch_json(f"{api_base}/dataset-summary")
 except Exception as exc:
     st.error(f"Could not load dashboard data from API: {exc}")
     st.info("Make sure the FastAPI backend is running on port 8000.")
     st.stop()
 
+
+if dataset_info["weeks_loaded"] < 3:
+    st.warning(
+        "Forecasting is currently limited. At least 3 weekly reports are needed before forecasting becomes useful."
+    )
+
+st.subheader("Dataset Overview")
+
+d1, d2, d3, d4 = st.columns(4)
+d1.metric("Weeks Loaded", f"{dataset_info['weeks_loaded']:,}")
+d2.metric("Rows Loaded", f"{dataset_info['rows_loaded']:,}")
+d3.metric("Distinct Products", f"{dataset_info['distinct_products']:,}")
+d4.metric(
+    "Dataset Range",
+    "N/A" if not dataset_info["date_from"] else f"{dataset_info['date_from']} to {dataset_info['date_to']}",
+)
+
+st.markdown("---")
 
 st.subheader("Key Performance Indicators")
 
@@ -93,6 +130,30 @@ with left_col:
         st.dataframe(top_products_df, use_container_width=True, hide_index=True)
 
 with right_col:
+    st.subheader("Uploaded Weeks")
+    weeks_df = pd.DataFrame(weeks_data)
+
+    if weeks_df.empty:
+        st.info("No weekly reports uploaded yet.")
+    else:
+        weeks_df = weeks_df.rename(
+            columns={
+                "week_start": "Week Start",
+                "week_end": "Week End",
+                "row_count": "Rows",
+                "total_units": "Units Sold",
+                "sales_value": "Sales Value (£)",
+                "profit_value": "Profit (£)",
+                "distinct_products": "Distinct Products",
+            }
+        )
+        st.dataframe(weeks_df, use_container_width=True, hide_index=True)
+
+st.markdown("---")
+
+left_col_2, right_col_2 = st.columns([1.2, 1])
+
+with left_col_2:
     st.subheader("Weekly Summary")
     weekly_summary_df = pd.DataFrame(weekly_summary)
 
@@ -107,9 +168,51 @@ with right_col:
                 "sales_value": "Sales Value (£)",
                 "profit_value": "Profit (£)",
                 "total_products": "Distinct Products",
+                "row_count": "Rows",
             }
         )
         st.dataframe(weekly_summary_df, use_container_width=True, hide_index=True)
+
+with right_col_2:
+    st.subheader("Sales Forecast")
+
+    forecast_history_df = pd.DataFrame(forecast_data.get("history", []))
+    forecast_future_df = pd.DataFrame(forecast_data.get("forecast", []))
+    forecast_message = forecast_data.get("message", "")
+
+    if forecast_message:
+        st.info(forecast_message)
+
+    if not forecast_history_df.empty:
+        forecast_history_df["type"] = "Historical"
+
+    if not forecast_future_df.empty:
+        forecast_future_df["type"] = "Forecast"
+
+    forecast_chart_df = pd.concat(
+        [forecast_history_df, forecast_future_df],
+        ignore_index=True,
+    )
+
+    if forecast_chart_df.empty:
+        st.info("No forecast data available yet.")
+    else:
+        forecast_chart_df = forecast_chart_df.rename(
+            columns={
+                "week_end": "Week End",
+                "sales_value": "Sales Value (£)",
+                "type": "Series",
+            }
+        )
+
+        st.line_chart(
+            data=forecast_chart_df,
+            x="Week End",
+            y="Sales Value (£)",
+            color="Series",
+        )
+
+        st.dataframe(forecast_chart_df, use_container_width=True, hide_index=True)
 
 st.markdown("---")
 
