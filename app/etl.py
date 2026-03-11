@@ -255,6 +255,98 @@ def top_products(df: pd.DataFrame, limit: int = 10) -> list[dict]:
     return result.to_dict(orient="records")
 
 
+def top_profit_products(df: pd.DataFrame, limit: int = 10) -> list[dict]:
+    if df.empty:
+        return []
+
+    result = (
+        df.groupby("product", as_index=False)
+        .agg(
+            total_units=("total_units", "sum"),
+            sales_value=("sales_value", "sum"),
+            profit_value=("profit_value", "sum"),
+            margin_percent=("margin_percent", "mean"),
+        )
+        .sort_values(["profit_value", "sales_value"], ascending=[False, False])
+        .head(limit)
+        .reset_index(drop=True)
+    )
+
+    result["sales_value"] = result["sales_value"].round(2)
+    result["profit_value"] = result["profit_value"].round(2)
+    result["margin_percent"] = result["margin_percent"].round(2)
+
+    return result.to_dict(orient="records")
+
+
+def worst_margin_products(df: pd.DataFrame, limit: int = 10) -> list[dict]:
+    if df.empty:
+        return []
+
+    filtered = df[df["sales_value"] > 0].copy()
+
+    if filtered.empty:
+        return []
+
+    result = (
+        filtered.groupby("product", as_index=False)
+        .agg(
+            total_units=("total_units", "sum"),
+            sales_value=("sales_value", "sum"),
+            profit_value=("profit_value", "sum"),
+            margin_percent=("margin_percent", "mean"),
+        )
+        .sort_values(["margin_percent", "profit_value"], ascending=[True, True])
+        .head(limit)
+        .reset_index(drop=True)
+    )
+
+    result["sales_value"] = result["sales_value"].round(2)
+    result["profit_value"] = result["profit_value"].round(2)
+    result["margin_percent"] = result["margin_percent"].round(2)
+
+    return result.to_dict(orient="records")
+
+
+def department_sales(df: pd.DataFrame) -> list[dict]:
+    if df.empty:
+        return []
+
+    result = (
+        df.groupby("department", as_index=False)
+        .agg(
+            total_units=("total_units", "sum"),
+            sales_value=("sales_value", "sum"),
+            distinct_products=("product", "nunique"),
+        )
+        .sort_values("sales_value", ascending=False)
+        .reset_index(drop=True)
+    )
+
+    result["sales_value"] = result["sales_value"].round(2)
+    return result.to_dict(orient="records")
+
+
+def department_profit(df: pd.DataFrame) -> list[dict]:
+    if df.empty:
+        return []
+
+    result = (
+        df.groupby("department", as_index=False)
+        .agg(
+            profit_value=("profit_value", "sum"),
+            sales_value=("sales_value", "sum"),
+            total_units=("total_units", "sum"),
+        )
+        .sort_values("profit_value", ascending=False)
+        .reset_index(drop=True)
+    )
+
+    result["sales_value"] = result["sales_value"].round(2)
+    result["profit_value"] = result["profit_value"].round(2)
+    return result.to_dict(orient="records")
+
+
 def weekly_summary(df: pd.DataFrame) -> list[dict]:
     if df.empty:
         return []
@@ -344,11 +436,7 @@ def dataset_summary(df: pd.DataFrame) -> dict:
             "date_to": None,
         }
 
-    week_count = (
-        df[["week_start", "week_end"]]
-        .drop_duplicates()
-        .shape[0]
-    )
+    week_count = df[["week_start", "week_end"]].drop_duplicates().shape[0]
 
     return {
         "weeks_loaded": int(week_count),

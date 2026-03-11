@@ -69,6 +69,10 @@ with st.sidebar:
 try:
     kpis = fetch_json(f"{api_base}/kpis")
     top_products = fetch_json(f"{api_base}/top-products")
+    top_profit_products = fetch_json(f"{api_base}/top-profit-products")
+    worst_margin_products = fetch_json(f"{api_base}/worst-margin-products")
+    department_sales = fetch_json(f"{api_base}/department-sales")
+    department_profit = fetch_json(f"{api_base}/department-profit")
     weekly_summary = fetch_json(f"{api_base}/weekly-summary")
     daily_units = fetch_json(f"{api_base}/daily-units")
     forecast_data = fetch_json(f"{api_base}/forecast?periods=4")
@@ -151,9 +155,85 @@ with right_col:
 
 st.markdown("---")
 
-left_col_2, right_col_2 = st.columns([1.2, 1])
+mid_left, mid_right = st.columns(2)
+
+with mid_left:
+    st.subheader("Top Profit Products")
+    top_profit_df = pd.DataFrame(top_profit_products)
+
+    if top_profit_df.empty:
+        st.info("No profit data available yet.")
+    else:
+        top_profit_df = top_profit_df.rename(
+            columns={
+                "product": "Product",
+                "total_units": "Units Sold",
+                "sales_value": "Sales Value (£)",
+                "profit_value": "Profit (£)",
+                "margin_percent": "Margin %",
+            }
+        )
+        st.dataframe(top_profit_df, use_container_width=True, hide_index=True)
+
+with mid_right:
+    st.subheader("Worst Margin Products")
+    worst_margin_df = pd.DataFrame(worst_margin_products)
+
+    if worst_margin_df.empty:
+        st.info("No margin data available yet.")
+    else:
+        worst_margin_df = worst_margin_df.rename(
+            columns={
+                "product": "Product",
+                "total_units": "Units Sold",
+                "sales_value": "Sales Value (£)",
+                "profit_value": "Profit (£)",
+                "margin_percent": "Margin %",
+            }
+        )
+        st.dataframe(worst_margin_df, use_container_width=True, hide_index=True)
+
+st.markdown("---")
+
+left_col_2, right_col_2 = st.columns([1.1, 1.1])
 
 with left_col_2:
+    st.subheader("Department Sales")
+    dept_sales_df = pd.DataFrame(department_sales)
+
+    if dept_sales_df.empty:
+        st.info("No department sales data available yet.")
+    else:
+        chart_sales_df = dept_sales_df.rename(
+            columns={
+                "department": "Department",
+                "sales_value": "Sales Value (£)",
+            }
+        )
+        st.bar_chart(chart_sales_df, x="Department", y="Sales Value (£)")
+        st.dataframe(chart_sales_df, use_container_width=True, hide_index=True)
+
+with right_col_2:
+    st.subheader("Department Profit")
+    dept_profit_df = pd.DataFrame(department_profit)
+
+    if dept_profit_df.empty:
+        st.info("No department profit data available yet.")
+    else:
+        chart_profit_df = dept_profit_df.rename(
+            columns={
+                "department": "Department",
+                "profit_value": "Profit (£)",
+            }
+        )
+        st.bar_chart(chart_profit_df, x="Department", y="Profit (£)")
+        st.dataframe(chart_profit_df, use_container_width=True, hide_index=True)
+
+st.markdown("---")
+
+left_col_3, right_col_3 = st.columns([1.2, 1])
+
+with left_col_3:
     st.subheader("Weekly Summary")
     weekly_summary_df = pd.DataFrame(weekly_summary)
 
@@ -173,7 +253,7 @@ with left_col_2:
         )
         st.dataframe(weekly_summary_df, use_container_width=True, hide_index=True)
 
-with right_col_2:
+with right_col_3:
     st.subheader("Sales Forecast")
 
     forecast_history_df = pd.DataFrame(forecast_data.get("history", []))

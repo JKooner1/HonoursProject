@@ -5,17 +5,21 @@ from app.etl import (
     calculate_kpis,
     daily_units_breakdown,
     dataset_summary,
+    department_profit,
+    department_sales,
     list_uploaded_weeks,
     load_sales_data,
     parse_daily_product_sales_report,
     reset_sales_data,
     top_products,
+    top_profit_products,
     weekly_summary,
+    worst_margin_products,
 )
 from app.forecast import forecast_weekly_sales
 from app.settings import settings
 
-app = FastAPI(title="Retail Analytics API", version="0.6.0")
+app = FastAPI(title="Retail Analytics API", version="0.7.0")
 
 
 @app.get("/health")
@@ -59,6 +63,30 @@ def get_kpis():
 def get_top_products(limit: int = 10):
     df = load_sales_data(settings.parquet_path)
     return top_products(df, limit=limit)
+
+
+@app.get("/top-profit-products")
+def get_top_profit_products(limit: int = 10):
+    df = load_sales_data(settings.parquet_path)
+    return top_profit_products(df, limit=limit)
+
+
+@app.get("/worst-margin-products")
+def get_worst_margin_products(limit: int = 10):
+    df = load_sales_data(settings.parquet_path)
+    return worst_margin_products(df, limit=limit)
+
+
+@app.get("/department-sales")
+def get_department_sales():
+    df = load_sales_data(settings.parquet_path)
+    return department_sales(df)
+
+
+@app.get("/department-profit")
+def get_department_profit():
+    df = load_sales_data(settings.parquet_path)
+    return department_profit(df)
 
 
 @app.get("/weekly-summary")
